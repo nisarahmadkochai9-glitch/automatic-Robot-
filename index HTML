@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Haji Kochai LTD Financial System</title>
+
+<!-- SheetJS for creating .xlsx files -->
+<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+
+<style>
+body { font-family: Arial; background:#eef2f7; padding:20px; }
+h1 { color:#0d47a1; }
+.card { background:white; padding:20px; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.1); margin-bottom:20px; }
+input, button, select { padding:10px; margin:5px; }
+button { background:#0d47a1; color:white; border:none; cursor:pointer; }
+table { width:100%; border-collapse:collapse; margin-top:10px; }
+th, td { border:1px solid #ddd; padding:8px; text-align:center; }
+th { background:#0d47a1; color:white; }
+.total { font-weight:bold; font-size:18px; color:#0d47a1; }
+.small { font-size:13px; color:#555; }
+.actions button { margin:2px; padding:6px 8px; font-size:13px; }
+.searchRow { display:flex; gap:8px; align-items:center; margin-top:8px; }
+</style>
+</head>
+<body>
+
+<h1>Haji Kochai LTD - Financial System</h1>
+
+<div class="card">
+  <h3>Add / Edit Commission Sale</h3>
+  <input id="name" placeholder="Commissioner Name">
+  <input id="boxes" type="number" placeholder="Boxes Sold" min="0" step="1">
+  <input id="docId" type="hidden">
+  <button id="saveBtn">Save Sale</button>
+  <button id="cancelEditBtn" style="display:none;background:#777;">Cancel Edit</button>
+  <div class="small">Tip: Commission = Boxes × 0.005</div>
+</div>
+
+<div class="card">
+  <h3>Sales Records</h3>
+
+  <div class="searchRow">
+    <input id="searchInput" placeholder="Search by name..." style="flex:1;">
+    <select id="monthFilter">
+      <option value="">All months</option>
+    </select>
+    <button id="refreshBtn">Refresh</button>
+    <button id="downloadBtn">Download Excel</button>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Boxes</th><th>Commission (0.005)</th><th>Created At</th><th>Actions</th></tr>
+    </thead>
+    <tbody id="tableBody"></tbody>
+  </table>
+
+  <p class="total">Total Commission: <span id="totalCommission">0</span></p>
+</div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
+  import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-analytics.js";
+  import {
+    getFirestore,
+    collection,
+    addDoc,
+    doc,
+    getDoc,
+    updateDoc,
+    deleteDoc,
+    serverTimestamp,
+    query,
+    orderBy,
+    getDocs
+  } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
+
+  // Firebase config (ستاسو ورکړل شوی)
+  const firebaseConfig = {
+    apiKey: "AIzaSyBY8m-sv8_DF13R-hYd4RKpN5XrjvUqj1I",
+    authDomain: "kochai-group-9a344.firebaseapp.com",
+    projectId: "kochai-group-9a344",
+    storageBucket: "kochai-group-9a344.firebasestorage.app",
+    messagingSenderId: "510141048212",
+    appId: "1:510141048212:web:f665c3009ca9084f4a5b81",
+    measurementId: "G-PJ2ES5MG3M"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const analytics = getAnalytics(app);
+  const db = getFirestore(app);
+
+  // DOM elements
+  const nameInput = document.getElementById("name");
+  const boxesInput = document.getElementById("boxes");
+  const docIdInput = document.getElementById("docId");
+  const saveBtn = document.getElementById("saveBtn");
+  const cancelEditBtn = document.getElementById("cancelEditBtn");
+  const tableBody = document.getElementById("tableBody");
+  const totalCommissionEl = document.getElementById("totalCommission");
+  const downloadBtn = document.getElementById("downloadBtn");
+  const refreshBtn = document.getElementById("refreshBtn");
+  const searchInput = document.getElementById("searchInput");
+  const monthFilter = document.getElementById("monthFilter");
+
+  // Save or update record
+  saveBtn.addEventListener("click", async () => {
+    const name = nameInput.value.trim();
+    const boxes = Number(boxesInput.value);
+    if (!name || !boxes) { alert("Fill all fields"); return; }
+    const commission = boxes * 0.005;
+    const editingId = docIdInput.value;
+    if (editingId) {
+      const ref = doc(db, "sales", editingId);
+      await updateDoc(ref, { name, boxes, commission });
+      cancelEdit();
+    } else {
+      await addDoc(collection(db, "sales"), {
+        name,
+        boxes,
+        commission,
+        createdAt: serverTimestamp()
+      });
+    }
+    nameInput.value = "";
+    boxesInput.value = "";
+    await loadData();
+  });
+
+  cancelEditBtn.addEventListener("click", cancelEdit);
+  function cancelEdit() {
+    docIdInput.value = "";
+    saveBtn.textContent = "Save Sale";
+    cancelEditBtn.style.display = "none";
+    nameInput.value = "";
+    boxesInput.value = "";
+  }
+
+  // Load and render data
+  async function loadData() {
+    const q = query(collection(db, "sales"), orderBy("createdAt", "desc"));
+    const snapshot = await getDocs(q);
+    tableBody.innerHTML = "";
+    let total = 0;
+    const monthsSet = new Set();
+
+    snapshot.forEach(docSnap => {
+      const data = docSnap.data();
+      const id = docSnap.id;
+      const boxes = Number(data.boxes) || 0;
+      const commission = Number(data.commission) || (boxes * 0.005);
+      total += commission;
+
+      let createdAtStr = "";
+      let monthKey = "";
+      if (data.createdAt && typeof data.createdAt.toDate === "function") {
+        const d = data.createdAt.toDate();
+        createdAtStr = d.toLocaleString();
+        monthKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+        monthsSet.add(monthKey);
+      }
+
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${data.name || ""}</td>
+        <td>${boxes}</td>
+        <td>${commission.toFixed(3)}</td>
+        <td>${createdAtStr}</td>
+        <td class="actions">
+          <button onclick="editRecord('${id}')">Edit</button>
+          <button onclick="deleteRecord('${id}')" style="background:#c62828;">Delete</button>
+        </td>
+      `;
+      tableBody.appendChild(tr);
+    });
+
+    populateMonthFilter(Array.from(monthsSet).sort().reverse());
+    totalCommissionEl.innerText = total.toFixed(3);
+  }
+
+  // Edit and delete exposed to window
+  window.editRecord = async function(id) {
+    try {
+      const docRef = doc(db, "sales", id);
+      const docSnap = await getDoc(docRef);
+      if (!docSnap.exists()) { alert("Record not found"); return; }
+      const data = docSnap.data();
+      docIdInput.value = id;
+      nameInput.value = data.name || "";
+      boxesInput.value = data.boxes || "";
+      saveBtn.textContent = "Update Sale";
+      cancelEditBtn.style.display = "inline-block";
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (e) {
+      console.error(e);
+      alert("Error fetching record for edit.");
+    }
+  };
+
+  window.deleteRecord = async function(id) {
+    if (!confirm("Are you sure you want to delete this record?")) return;
+    await deleteDoc(doc(db, "sales", id));
+    await loadData();
+  };
+
+  function populateMonthFilter(months) {
+    monthFilter.innerHTML = '<option value="">All months</option>';
+    months.forEach(m => {
+      const opt = document.createElement("option");
+      opt.value = m;
+      opt.textContent = m;
+      monthFilter.appendChild(opt);
+    });
+  }
+
+  searchInput.addEventListener("input", applyFilters);
+  monthFilter.addEventListener("change", applyFilters);
+  refreshBtn.addEventListener("click", loadData);
+
+  async function applyFilters() {
+    const nameQ = searchInput.value.trim().toLowerCase();
+    const monthQ = monthFilter.value;
+    const q = query(collection(db, "sales"), orderBy("createdAt", "desc"));
+    const snapshot = await getDocs(q);
+    tableBody.innerHTML = "";
+    let total = 0;
+
+    snapshot.forEach(docSnap => {
+      const data = docSnap.data();
+      const id = docSnap.id;
+      const boxes = Number(data.boxes) || 0;
+      const commission = Number(data.commission) || (boxes * 0.005);
+
+      let createdAtStr = "";
+      let monthKey = "";
+      if (data.createdAt && typeof data.createdAt.toDate === "function") {
+        const d = data.createdAt.toDate();
+        createdAtStr = d.toLocaleString();
+        monthKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+      }
+
+      if (nameQ && !(data.name || "").toLowerCase().includes(nameQ)) return;
+      if (monthQ && monthQ !== monthKey) return;
+
+      total += commission;
+
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${data.name || ""}</td>
+        <td>${boxes}</td>
+        <td>${commission.toFixed(3)}</td>
+        <td>${createdAtStr}</td>
+        <td class="actions">
+          <button onclick="editRecord('${id}')">Edit</button>
+          <button onclick="deleteRecord('${id}')" style="background:#c62828;">Delete</button>
+        </td>
+      `;
+      tableBody.appendChild(tr);
+    });
+
+    totalCommissionEl.innerText = total.toFixed(3);
+  }
+
+  // Download Excel with real Excel formulas (SUM and SUMIFS)
+  downloadBtn.addEventListener("click", async () => {
+    const q = query(collection(db, "sales"), orderBy("createdAt", "desc"));
+    const snapshot = await getDocs(q);
+
+    // Build rows: header + data (Created At as Date objects)
+    const rows = [["Name", "Boxes", "Commission (0.005)", "Created At", "Doc ID"]];
+    snapshot.forEach(docSnap => {
+      const data = docSnap.data();
+      const boxes = Number(data.boxes) || 0;
+      const commission = Number(data.commission) || (boxes * 0.005);
+      let createdAtDate = "";
+      if (data.createdAt && typeof data.createdAt.toDate === "function") {
+        createdAtDate = data.createdAt.toDate();
+      } else if (data.createdAt) {
+        try { createdAtDate = new Date(data.createdAt); } catch(e) { createdAtDate = ""; }
+      }
+      rows.push([data.name || "", boxes, commission, createdAtDate, docSnap.id]);
+    });
+
+    // Sales sheet
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+
+    // Ensure Created At column cells are real dates
+    for (let r = 2; r <= rows.length; r++) {
+      const addr = 'D' + r;
+      const cell = ws[addr];
+      if (cell && cell.v instanceof Date) {
+        ws[addr] = { t: 'd', v: cell.v };
+      } else if (cell && typeof cell.v === 'string' && cell.v) {
+        const dt = new Date(cell.v);
+        if (!isNaN(dt)) ws[addr] = { t: 'd', v: dt };
+      }
+    }
+
+    // Add Total Commission formula below data
+    const lastDataRow = rows.length;
+    const totalRowIndex = lastDataRow + 1;
+    ws['A' + totalRowIndex] = { v: "Total Commission:", t: "s" };
+    ws['C' + totalRowIndex] = { f: `SUM(C2:C${lastDataRow})` };
+
+    // Update range
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    range.e.r = Math.max(range.e.r, totalRowIndex - 1);
+    ws['!ref'] = XLSX.utils.encode_range(range);
+    ws['!cols'] = [{wpx:150},{wpx:80},{wpx:120},{wpx:140},{wpx:200}];
+
+    // Summary sheet with SUMIFS formulas
+    const monthSet = new Set();
+    snapshot.forEach(docSnap => {
+      const data = docSnap.data();
+      if (data.createdAt && typeof data.createdAt.toDate === "function") {
+        const d = data.createdAt.toDate();
+        const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+        monthSet.add(key);
+      }
+    });
+    const months = Array.from(monthSet).sort();
+
+    const summaryRows = [["Month", "StartDate", "EndDate", "Total Commission (SUMIFS)"]];
+    months.forEach(m => {
+      const [yy, mm] = m.split("-");
+      const year = Number(yy);
+      const month = Number(mm);
+      const startDate = new Date(year, month - 1, 1);
+      const endDate = new Date(year, month, 1);
+      summaryRows.push([m, startDate, endDate, null]);
+    });
+    // Grand total placeholder (formula will sum D2:Dn)
+    summaryRows.push(["Grand Total", "", "", { f: `SUM(D2:D${summaryRows.length - 1})` }]);
+
+    const ws2 = XLSX.utils.aoa_to_sheet(summaryRows);
+
+    // Convert StartDate and EndDate to real dates
+    for (let r = 2; r <= summaryRows.length; r++) {
+      const bCell = 'B' + r;
+      const cCell = 'C' + r;
+      if (ws2[bCell] && ws2[bCell].v instanceof Date) ws2[bCell] = { t: 'd', v: ws2[bCell].v };
+      if (ws2[cCell] && ws2[cCell].v instanceof Date) ws2[cCell] = { t: 'd', v: ws2[cCell].v };
+    }
+
+    // Set SUMIFS formulas: SUMIFS(Sales!C:C, Sales!D:D, ">=" & B2, Sales!D:D, "<" & C2)
+    const summaryLastRow = summaryRows.length;
+    for (let i = 2; i <= summaryLastRow - 1; i++) {
+      ws2['D' + i] = { f: `SUMIFS(Sales!C:C,Sales!D:D,">="&B${i},Sales!D:D,"<"&C${i})` };
+    }
+
+    ws2['!cols'] = [{wpx:120},{wpx:120},{wpx:120},{wpx:180}];
+
+    // Create workbook and download
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Sales");
+    XLSX.utils.book_append_sheet(wb, ws2, "Summary");
+
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([wbout], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "Haji_Kochai_Sales_Report_With_SUMIFS.xlsx";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+
+  // Initial load
+  await loadData();
+
+</script>
+
+<footer>
+Created beautifully by <b>Nesar Ahmad Kochai</b><br>
+Email: nisarahmadkochai9@gmail.com<br>
+Mobile: +93700015656<br>
+CEO of the Haji Kochai Oil & Sugar LTD
+</footer>
+
+</body>
+</html>
